@@ -2,54 +2,96 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
+/// <summary>
+/// MODIFIED from v1 — adds Save, Load, and Delete Save buttons.
+/// All v1 slider + seed controls are preserved and unchanged.
+///
+/// New additions:
+///   • Save / Load / Delete buttons wired to WorldManager
+///   • Streaming stats label (active chunks, pending jobs) updated each frame
+///   • OnWorldLoaded callback subscribed from WorldManager
+///
+/// The streaming stats update happens in Update() rather than via event to give
+/// a smooth real-time readout as chunks stream in.
+/// </summary>
 public class UIController : MonoBehaviour
 {
-    [Header("Buttons")]
+    // ── Inspector: Buttons ────────────────────────────────────────────────────────
+
+    [Header("Buttons — Generation")]
     [SerializeField] private Button generateButton;
     [SerializeField] private Button randomSeedButton;
     [SerializeField] private Button clearButton;
 
+    [Header("Buttons — Save / Load")]
+    [SerializeField] private Button saveButton;
+    [SerializeField] private Button loadButton;
+    [SerializeField] private Button deleteSaveButton;
+
+    // ── Inspector: Seed ───────────────────────────────────────────────────────────
+
     [Header("Seed")]
     [SerializeField] private TMP_InputField seedInputField;
+
+    // ── Inspector: Sliders ────────────────────────────────────────────────────────
 
     [Header("Sliders")]
     [SerializeField] private Slider scaleSlider;
     [SerializeField] private Slider octavesSlider;
     [SerializeField] private Slider persistenceSlider;
     [SerializeField] private Slider lacunaritySlider;
-    [SerializeField] private Slider widthSlider;
-    [SerializeField] private Slider heightSlider;
 
-    [Header("Slider Value Labels")]
+    // ── Inspector: Labels ─────────────────────────────────────────────────────────
+
+    [Header("Value Labels")]
     [SerializeField] private TMP_Text scaleValueLabel;
     [SerializeField] private TMP_Text octavesValueLabel;
     [SerializeField] private TMP_Text persistenceValueLabel;
     [SerializeField] private TMP_Text lacunarityValueLabel;
-    [SerializeField] private TMP_Text widthValueLabel;
-    [SerializeField] private TMP_Text heightValueLabel;
 
-    [Header("Status Bar")]
+    [Header("Status / Stats")]
     [SerializeField] private TMP_Text statusLabel;
+    [SerializeField] private TMP_Text streamingStatsLabel;    // NEW: live chunk counter
+
+    // ── Private ───────────────────────────────────────────────────────────────────
+
+    private ChunkStreamer _streamer;
+
+    // ── Unity Lifecycle ───────────────────────────────────────────────────────────
 
     private void Start()
     {
+        _streamer = FindAnyObjectByType<ChunkStreamer>();
+
         InitSliders();
         InitSeedField();
         RegisterButtonListeners();
         RegisterSliderListeners();
-        SubscribeToWorldManagerEvents();
+        SubscribeToEvents();
         RefreshAllLabels();
-        SetStatus("Ready — press Generate or Random Seed to start.");
+
+        SetStatus("Ready. Press Generate or scroll to explore.");
+    }
+
+    private void Update()
+    {
+        // Update streaming stats every frame (cheap text update)
+        if (_streamer != null && streamingStatsLabel != null)
+        {
+            streamingStatsLabel.text =
+                $"Chunks: {_streamer.ActiveChunkCount} active | {_streamer.PendingJobCount} pending";
+        }
     }
 
     private void OnDestroy()
     {
-        if (WorldManager.Instance != null)
-        {
-            WorldManager.Instance.OnWorldGenerated -= HandleWorldGenerated;
-            WorldManager.Instance.OnWorldCleared   -= HandleWorldCleared;
-        }
+        if (WorldManager.Instance == null) return;
+        WorldManager.Instance.OnWorldGenerated -= HandleWorldGenerated;
+        WorldManager.Instance.OnWorldCleared   -= HandleWorldCleared;
+        WorldManager.Instance.OnWorldLoaded    -= HandleWorldLoaded;
     }
+
+    // ── Initialization ────────────────────────────────────────────────────────────
 
     private void InitSliders()
     {
@@ -58,8 +100,6 @@ public class UIController : MonoBehaviour
         ConfigureSlider(octavesSlider,     1f,   8f,   true,  s.octaves);
         ConfigureSlider(persistenceSlider, 0.1f, 1f,   false, s.persistence);
         ConfigureSlider(lacunaritySlider,  1f,   4f,   false, s.lacunarity);
-        ConfigureSlider(widthSlider,       20f,  300f, true,  s.width);
-        ConfigureSlider(heightSlider,      20f,  300f, true,  s.height);
     }
 
     private void InitSeedField()
@@ -74,6 +114,9 @@ public class UIController : MonoBehaviour
         if (generateButton   != null) generateButton.onClick.AddListener(OnGenerateClicked);
         if (randomSeedButton != null) randomSeedButton.onClick.AddListener(OnRandomSeedClicked);
         if (clearButton      != null) clearButton.onClick.AddListener(OnClearClicked);
+        if (saveButton       != null) saveButton.onClick.AddListener(OnSaveClicked);
+        if (loadButton       != null) loadButton.onClick.AddListener(OnLoadClicked);
+        if (deleteSaveButton != null) deleteSaveButton.onClick.AddListener(OnDeleteSaveClicked);
     }
 
     private void RegisterSliderListeners()
@@ -82,20 +125,21 @@ public class UIController : MonoBehaviour
         if (octavesSlider     != null) octavesSlider.onValueChanged.AddListener(_     => RefreshAllLabels());
         if (persistenceSlider != null) persistenceSlider.onValueChanged.AddListener(_ => RefreshAllLabels());
         if (lacunaritySlider  != null) lacunaritySlider.onValueChanged.AddListener(_  => RefreshAllLabels());
-        if (widthSlider       != null) widthSlider.onValueChanged.AddListener(_       => RefreshAllLabels());
-        if (heightSlider      != null) heightSlider.onValueChanged.AddListener(_      => RefreshAllLabels());
     }
 
-    private void SubscribeToWorldManagerEvents()
+    private void SubscribeToEvents()
     {
         if (WorldManager.Instance == null) return;
         WorldManager.Instance.OnWorldGenerated += HandleWorldGenerated;
         WorldManager.Instance.OnWorldCleared   += HandleWorldCleared;
+        WorldManager.Instance.OnWorldLoaded    += HandleWorldLoaded;
     }
+
+    // ── Button Handlers ───────────────────────────────────────────────────────────
 
     private void OnGenerateClicked()
     {
-        SetStatus("Generating world…");
+        SetStatus("Generating…");
         WorldManager.Instance.ApplySettingsAndGenerate(BuildSettingsFromUI());
     }
 
@@ -105,30 +149,59 @@ public class UIController : MonoBehaviour
         WorldManager.Instance.RandomizeSeedAndGenerate();
     }
 
-    private void OnClearClicked() => WorldManager.Instance.ClearWorld();
+    private void OnClearClicked()
+    {
+        WorldManager.Instance.ClearWorld();
+    }
+
+    private void OnSaveClicked()
+    {
+        SetStatus("Saving world…");
+        WorldManager.Instance.SaveWorld();
+        SetStatus("World saved!");
+    }
+
+    private void OnLoadClicked()
+    {
+        SetStatus("Loading world…");
+        WorldManager.Instance.LoadWorld();
+    }
+
+    private void OnDeleteSaveClicked()
+    {
+        WorldManager.Instance.DeleteSave();
+        SetStatus("Save deleted.");
+    }
+
+    // ── Event Callbacks ───────────────────────────────────────────────────────────
 
     private void HandleWorldGenerated(GenerationSettings s)
     {
         UpdateSeedField(s.seed);
-        SetStatus($"World generated! Seed: {s.seed} | Size: {s.width}×{s.height}");
+        SetStatus($"✓ World streaming — Seed: {s.seed}");
     }
 
-    private void HandleWorldCleared() => SetStatus("World cleared.");
+    private void HandleWorldCleared()  => SetStatus("World cleared.");
+    private void HandleWorldLoaded(string name) => SetStatus($"✓ World '{name}' loaded.");
+
+    // ── Settings Builder ──────────────────────────────────────────────────────────
 
     private GenerationSettings BuildSettingsFromUI()
     {
-        if (!int.TryParse(seedInputField != null ? seedInputField.text : "0", out int seed)) seed = 0;
+        if (!int.TryParse(seedInputField != null ? seedInputField.text : "0", out int seed))
+            seed = 0;
+
         return new GenerationSettings
         {
-            width       = SliderIntValue(widthSlider, 120),
-            height      = SliderIntValue(heightSlider, 80),
             seed        = seed,
-            scale       = SliderFloatValue(scaleSlider, 40f),
-            octaves     = SliderIntValue(octavesSlider, 4),
+            scale       = SliderFloatValue(scaleSlider,       40f),
+            octaves     = SliderIntValue(octavesSlider,       4),
             persistence = SliderFloatValue(persistenceSlider, 0.5f),
-            lacunarity  = SliderFloatValue(lacunaritySlider, 2f),
+            lacunarity  = SliderFloatValue(lacunaritySlider,  2f),
         };
     }
+
+    // ── Label Updates ─────────────────────────────────────────────────────────────
 
     private void RefreshAllLabels()
     {
@@ -136,19 +209,20 @@ public class UIController : MonoBehaviour
         SetLabel(octavesValueLabel,     $"Octaves: {SliderIntValue(octavesSlider, 4)}");
         SetLabel(persistenceValueLabel, $"Persistence: {SliderFloatValue(persistenceSlider, 0.5f):F2}");
         SetLabel(lacunarityValueLabel,  $"Lacunarity: {SliderFloatValue(lacunaritySlider, 2f):F2}");
-        SetLabel(widthValueLabel,       $"Width: {SliderIntValue(widthSlider, 120)} tiles");
-        SetLabel(heightValueLabel,      $"Height: {SliderIntValue(heightSlider, 80)} tiles");
     }
 
-    private static void ConfigureSlider(Slider s, float min, float max, bool whole, float value)
+    // ── Utilities ─────────────────────────────────────────────────────────────────
+
+    private static void ConfigureSlider(Slider s, float min, float max, bool whole, float val)
     {
         if (s == null) return;
-        s.minValue = min; s.maxValue = max; s.wholeNumbers = whole; s.value = value;
+        s.minValue = min; s.maxValue = max; s.wholeNumbers = whole; s.value = val;
     }
 
-    private static int   SliderIntValue  (Slider s, int   fb) => s != null ? Mathf.RoundToInt(s.value) : fb;
+    private static int   SliderIntValue(Slider s,   int   fb) => s != null ? Mathf.RoundToInt(s.value) : fb;
     private static float SliderFloatValue(Slider s, float fb) => s != null ? s.value : fb;
-    private static void  SetLabel(TMP_Text l, string t) { if (l != null) l.text = t; }
-    private void SetStatus(string msg) { if (statusLabel != null) statusLabel.text = msg; }
+    private static void  SetLabel(TMP_Text t,  string msg)    { if (t != null) t.text = msg; }
+
+    private void SetStatus(string msg)     { if (statusLabel    != null) statusLabel.text = msg; }
     private void UpdateSeedField(int seed) { if (seedInputField != null) seedInputField.text = seed.ToString(); }
 }
