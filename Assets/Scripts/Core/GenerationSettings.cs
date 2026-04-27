@@ -4,37 +4,15 @@ using UnityEngine;
 public class GenerationSettings
 {
     [Header("Map Dimensions")]
-    [Tooltip("Number of tiles along the X axis.")]
-    [Range(10, 500)]
-    public int width = 120;
-
-    [Tooltip("Number of tiles along the Y axis.")]
-    [Range(10, 500)]
-    public int height = 80;
+    [Range(10, 500)] public int width  = 120;
+    [Range(10, 500)] public int height = 80;
 
     [Header("Noise Parameters")]
-    [Tooltip("Integer seed. Same seed + same settings = identical map every time.")]
-    public int seed = 42;
-
-    [Tooltip("Controls the 'zoom' of the noise. Larger = smoother / more zoomed-out.")]
-    [Range(1f, 200f)]
-    public float scale = 40f;
-
-    [Tooltip("Number of Perlin Noise layers summed together (fBm octaves). More = more detail.")]
-    [Range(1, 8)]
-    public int octaves = 4;
-
-    [Tooltip("How much each successive octave contributes to the final value. " +
-             "Low = smooth; High = rough.")]
-    [Range(0.1f, 1f)]
-    public float persistence = 0.5f;
-
-    [Tooltip("How much the frequency increases per octave. " +
-             "2.0 is the standard 'doubling' value.")]
-    [Range(1f, 4f)]
-    public float lacunarity = 2f;
-
-    [Tooltip("Manual 2D scroll / pan offset for the noise sample window.")]
+    public int     seed        = 42;
+    [Range(1f, 200f)]  public float scale       = 40f;
+    [Range(1, 8)]      public int   octaves     = 4;
+    [Range(0.1f, 1f)]  public float persistence = 0.5f;
+    [Range(1f, 4f)]    public float lacunarity  = 2f;
     public Vector2 offset = Vector2.zero;
 
     public void Validate()
@@ -48,6 +26,14 @@ public class GenerationSettings
     }
 
     public override string ToString() =>
-        $"[Seed:{seed} | {width}×{height} | Scale:{scale:F1} | " +
-        $"Oct:{octaves} | Persist:{persistence:F2} | Lac:{lacunarity:F2}]";
+        $"[Seed:{seed} | Scale:{scale:F1} | Oct:{octaves} | Persist:{persistence:F2} | Lac:{lacunarity:F2}]";
+}
+
+// DEPRECATED — залишено для сумісності
+[System.Serializable]
+public class TerrainLayer
+{
+    public string name           = "Unnamed";
+    [Range(0f, 1f)] public float heightThreshold = 0.5f;
+    public Color  color          = Color.white;
 }
