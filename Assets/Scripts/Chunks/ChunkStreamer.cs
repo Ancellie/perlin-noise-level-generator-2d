@@ -108,6 +108,7 @@ public class ChunkStreamer : MonoBehaviour
 
         ScheduleNewChunks(cameraChunk);
         PollCompletedJobs();
+        FlushPendingChunks();
         UnloadDistantChunks(cameraChunk);
     }
 
@@ -165,7 +166,6 @@ public class ChunkStreamer : MonoBehaviour
 
     private void PollCompletedJobs()
     {
-        int flushedThisFrame = 0;
         var completed = new List<ChunkCoord>(8);
 
         foreach (var kvp in _pendingJobs)
@@ -177,14 +177,13 @@ public class ChunkStreamer : MonoBehaviour
         foreach (var coord in completed)
         {
             var job = _pendingJobs[coord];
-            job.Handle.Complete();   // must call Complete even on finished jobs
+            job.Handle.Complete(); // must call Complete even on finished jobs
 
             // Copy from NativeArrays → managed arrays in ChunkData
             if (_activeChunks.TryGetValue(coord, out ChunkData data))
             {
-                int len           = chunkSize * chunkSize;
-                data.HeightMap      = job.HeightOut.ToArray();
-                data.MoistureMap    = job.MoistureOut.ToArray();
+                data.HeightMap = job.HeightOut.ToArray();
+                data.MoistureMap = job.MoistureOut.ToArray();
                 data.TemperatureMap = job.TempOut.ToArray();
                 data.HeightMapReady = true;
             }
@@ -198,11 +197,20 @@ public class ChunkStreamer : MonoBehaviour
             job.TempOffsets.Dispose();
 
             _pendingJobs.Remove(coord);
+        }
+    }
 
-            // Flush tiles (main-thread only, rate-limited)
-            if (flushedThisFrame < maxTilePlacementsPerFrame && _activeChunks.TryGetValue(coord, out ChunkData d))
+    // ── Step 2b: Flush data-ready chunks to the Tilemap (rate-limited) ────────────
+    private void FlushPendingChunks()
+    {
+        int flushedThisFrame = 0;
+        foreach (var kvp in _activeChunks)
+        {
+            if (flushedThisFrame >= maxTilePlacementsPerFrame) break;
+            ChunkData data = kvp.Value;
+            if (data.State == ChunkData.ChunkState.Pending && data.IsDataReady)
             {
-                FlushChunkToTilemap(d);
+                FlushChunkToTilemap(data);
                 flushedThisFrame++;
             }
         }
