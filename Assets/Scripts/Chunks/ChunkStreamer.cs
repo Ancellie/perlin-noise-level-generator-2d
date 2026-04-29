@@ -1,0 +1,376 @@
+using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
+using UnityEngine;
+using UnityEngine.Tilemaps;
+
+/// <summary>
+/// Central chunk streaming engine — the most performance-critical class.
+///
+/// RESPONSIBILITIES:
+///   • Determine which chunks should be loaded (visible radius around camera).
+///   • Schedule NoiseJobs for ungenerated chunks (one job per chunk, runs on workers).
+///   • Poll completed jobs each frame; copy results to ChunkData; place tiles.
+///   • Unload (clear tiles + destroy objects) for chunks beyond unload radius.
+///   • Prevent duplicate jobs via the _pendingJobs dictionary.
+///
+/// FRAME BUDGET:
+///   _maxTilePlacements limits how many chunk tile-sets are flushed per frame.
+///   This prevents a multi-hundred-millisecond hitch when many chunks complete at once.
+///
+/// THREAD SAFETY:
+///   NoiseJobs run on Unity worker threads. The main thread only touches NativeArrays
+///   after JobHandle.IsCompleted is true — no locks needed.
+///
+/// CHUNK DICTIONARY:
+///   Two dictionaries are maintained:
+///     _activeChunks  — all loaded ChunkData objects (keyed by ChunkCoord)
+///     _pendingJobs   — in-flight JobHandles + their NativeArray allocations
+///
+/// IMPORTANT: Attach this to the same GameObject as WorldManager.
+/// </summary>
+public class ChunkStreamer : MonoBehaviour
+{
+    // ── Inspector ────────────────────────────────────────────────────────────────
+
+    [Header("Chunk Settings")]
+    [Tooltip("Width/height of each square chunk in tiles. Power-of-2 recommended.")]
+    [SerializeField] public int chunkSize = 32;
+
+    [Tooltip("Chebyshev (square) radius in chunks to keep loaded around the camera.")]
+    [SerializeField] private int loadRadius = 4;
+
+    [Tooltip("Chunks beyond this radius are unloaded. Should be > loadRadius.")]
+    [SerializeField] private int unloadRadius = 6;
+
+    [Header("Performance")]
+    [Tooltip("Max chunks whose tiles are flushed to the Tilemap per frame. " +
+             "Increase for faster streaming; decrease to reduce frame hitches.")]
+    [SerializeField] private int maxTilePlacementsPerFrame = 2;
+
+    [Tooltip("Max new chunk jobs submitted per frame (limits worker thread saturation).")]
+    [SerializeField] private int maxJobsPerFrame = 4;
+
+    [Header("References")]
+    [SerializeField] private Tilemap tilemap;
+    [SerializeField] private TerrainConfigSO terrainConfig;
+
+    // ── Internal State ────────────────────────────────────────────────────────────
+
+    private readonly Dictionary<ChunkCoord, ChunkData>   _activeChunks = new(256);
+    private readonly Dictionary<ChunkCoord, PendingJob>  _pendingJobs  = new(64);
+
+    private GenerationSettings _settings;
+    private BiomeResolver      _resolver;
+    private Tile[]             _tileCache;
+
+    // Scratch list for unload pass (avoids alloc each frame)
+    private readonly List<ChunkCoord> _toUnload = new(32);
+
+    // ── Pending Job Bookkeeping ────────────────────────────────────────────────────
+
+    private struct PendingJob
+    {
+        public JobHandle             Handle;
+        public NativeArray<float>    HeightOut;
+        public NativeArray<float>    MoistureOut;
+        public NativeArray<float>    TempOut;
+        public NativeArray<float2>   ElevOffsets;
+        public NativeArray<float2>   MoistOffsets;
+        public NativeArray<float2>   TempOffsets;
+    }
+
+    // ── Public API ───────────────────────────────────────────────────────────────
+
+    /// <summary>Called by WorldManager.ApplySettingsAndGenerate() to reset the streamer.</summary>
+    public void Initialize(GenerationSettings settings, TerrainConfigSO config)
+    {
+        CancelAllPendingJobs();
+        ClearAllChunks();
+
+        _settings    = settings;
+        terrainConfig = config;
+        _resolver    = config.GetResolver();
+        _tileCache   = BuildTileCache(config);
+
+        Debug.Log($"[ChunkStreamer] Initialized — chunkSize={chunkSize}, " +
+                  $"loadRadius={loadRadius}, unloadRadius={unloadRadius}");
+    }
+
+    // ── Unity Lifecycle ───────────────────────────────────────────────────────────
+
+    private void Update()
+    {
+        if (_settings == null || _resolver == null) return;
+
+        ChunkCoord cameraChunk = GetCameraChunk();
+
+        ScheduleNewChunks(cameraChunk);
+        PollCompletedJobs();
+        UnloadDistantChunks(cameraChunk);
+    }
+
+    private void OnDestroy() => CancelAllPendingJobs();
+
+    // ── Step 1: Determine and schedule new chunks ─────────────────────────────────
+
+    private void ScheduleNewChunks(ChunkCoord centre)
+    {
+        int jobsThisFrame = 0;
+
+        for (int dy = -loadRadius; dy <= loadRadius; dy++)
+        {
+            for (int dx = -loadRadius; dx <= loadRadius; dx++)
+            {
+                var coord = new ChunkCoord(centre.X + dx, centre.Y + dy);
+
+                // Skip if already loaded or already being computed
+                if (_activeChunks.ContainsKey(coord) || _pendingJobs.ContainsKey(coord))
+                    continue;
+
+                ScheduleJob(coord);
+                jobsThisFrame++;
+                if (jobsThisFrame >= maxJobsPerFrame) return;
+            }
+        }
+    }
+
+    private void ScheduleJob(ChunkCoord coord)
+    {
+        // Register the ChunkData immediately so duplicate requests are blocked
+        var data = new ChunkData(coord, chunkSize);
+        _activeChunks[coord] = data;
+
+        var handle = NoiseJobScheduler.Schedule(
+            coord, chunkSize,
+            _settings.seed, _settings.scale,
+            _settings.octaves, _settings.persistence, _settings.lacunarity,
+            out var heightOut, out var moistureOut, out var tempOut,
+            out var elevOff, out var moistOff, out var tmpOff);
+
+        _pendingJobs[coord] = new PendingJob
+        {
+            Handle       = handle,
+            HeightOut    = heightOut,
+            MoistureOut  = moistureOut,
+            TempOut      = tempOut,
+            ElevOffsets  = elevOff,
+            MoistOffsets = moistOff,
+            TempOffsets  = tmpOff,
+        };
+    }
+
+    // ── Step 2: Poll and flush completed jobs ──────────────────────────────────────
+
+    private void PollCompletedJobs()
+    {
+        int flushedThisFrame = 0;
+        var completed = new List<ChunkCoord>(8);
+
+        foreach (var kvp in _pendingJobs)
+        {
+            if (!kvp.Value.Handle.IsCompleted) continue;
+            completed.Add(kvp.Key);
+        }
+
+        foreach (var coord in completed)
+        {
+            var job = _pendingJobs[coord];
+            job.Handle.Complete();   // must call Complete even on finished jobs
+
+            // Copy from NativeArrays → managed arrays in ChunkData
+            if (_activeChunks.TryGetValue(coord, out ChunkData data))
+            {
+                int len           = chunkSize * chunkSize;
+                data.HeightMap      = job.HeightOut.ToArray();
+                data.MoistureMap    = job.MoistureOut.ToArray();
+                data.TemperatureMap = job.TempOut.ToArray();
+                data.HeightMapReady = true;
+            }
+
+            // Dispose all NativeArrays — they were Allocator.TempJob
+            job.HeightOut.Dispose();
+            job.MoistureOut.Dispose();
+            job.TempOut.Dispose();
+            job.ElevOffsets.Dispose();
+            job.MoistOffsets.Dispose();
+            job.TempOffsets.Dispose();
+
+            _pendingJobs.Remove(coord);
+
+            // Flush tiles (main-thread only, rate-limited)
+            if (flushedThisFrame < maxTilePlacementsPerFrame && _activeChunks.TryGetValue(coord, out ChunkData d))
+            {
+                FlushChunkToTilemap(d);
+                flushedThisFrame++;
+            }
+        }
+    }
+
+    // ── Step 3: Place tiles on the shared Tilemap ────────────────────────────────
+
+    private void FlushChunkToTilemap(ChunkData data)
+    {
+        if (!data.IsDataReady) return;
+
+        int    cs      = chunkSize;
+        int    tileCount = cs * cs;
+        var    tiles   = new TileBase[tileCount];
+        var    origin  = data.WorldOrigin;
+        var    bounds  = new BoundsInt(origin.x, origin.y, 0, cs, cs, 1);
+
+        data.BiomeIndices = new int[tileCount];
+
+        for (int ly = 0; ly < cs; ly++)
+        {
+            for (int lx = 0; lx < cs; lx++)
+            {
+                int idx = lx + ly * cs;
+
+                // Apply override if this tile was modified by the player
+                if (data.TileOverrides.TryGetValue(new Vector2Int(lx, ly), out int overrideIdx))
+                {
+                    tiles[lx + ly * cs]  = _tileCache[overrideIdx];
+                    data.BiomeIndices[idx] = overrideIdx;
+                    continue;
+                }
+
+                float h = data.HeightMap[idx];
+                float m = data.MoistureMap[idx];
+                float t = data.TemperatureMap[idx];
+
+                var sample = _resolver.Resolve(h, m, t);
+
+                data.BiomeIndices[idx] = sample.DominantIndex;
+                tiles[lx + ly * cs]   = _tileCache[sample.DominantIndex];
+            }
+        }
+
+        tilemap.SetTilesBlock(bounds, tiles);
+        data.MarkReady();
+    }
+
+    // ── Step 4: Unload distant chunks ─────────────────────────────────────────────
+
+    private void UnloadDistantChunks(ChunkCoord centre)
+    {
+        _toUnload.Clear();
+
+        foreach (var kvp in _activeChunks)
+        {
+            if (kvp.Key.ChebyshevDistanceTo(centre) > unloadRadius)
+                _toUnload.Add(kvp.Key);
+        }
+
+        foreach (var coord in _toUnload)
+        {
+            // If job is still running, complete it first (avoid NativeArray leak)
+            if (_pendingJobs.TryGetValue(coord, out PendingJob job))
+            {
+                job.Handle.Complete();
+                DisposeJobArrays(job);
+                _pendingJobs.Remove(coord);
+            }
+
+            // Clear tiles from the shared Tilemap
+            var data   = _activeChunks[coord];
+            var origin = data.WorldOrigin;
+            var bounds = new BoundsInt(origin.x, origin.y, 0, chunkSize, chunkSize, 1);
+
+            tilemap.SetTilesBlock(bounds, new TileBase[chunkSize * chunkSize]);   // clear
+
+            data.Dispose();
+            _activeChunks.Remove(coord);
+        }
+    }
+
+    // ── Tile Cache ─────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds one solid-colour Tile per biome from the blended primary colour.
+    /// Tiles are runtime ScriptableObjects — not serialized to disk.
+    /// </summary>
+    private static Tile[] BuildTileCache(TerrainConfigSO config)
+    {
+        const int TexPx = 16;
+        var tiles = new Tile[config.biomes.Length];
+
+        for (int i = 0; i < config.biomes.Length; i++)
+        {
+            Color fill   = config.biomes[i].primaryColor;
+            Color border = new Color(fill.r * 0.72f, fill.g * 0.72f, fill.b * 0.72f, 1f);
+
+            var tex = new Texture2D(TexPx, TexPx, TextureFormat.RGBA32, false)
+            {
+                filterMode = FilterMode.Point,
+                wrapMode   = TextureWrapMode.Clamp
+            };
+
+            Color[] px = new Color[TexPx * TexPx];
+            for (int py = 0; py < TexPx; py++)
+                for (int px2 = 0; px2 < TexPx; px2++)
+                    px[px2 + py * TexPx] =
+                        (px2 == 0 || py == 0 || px2 == TexPx - 1 || py == TexPx - 1)
+                            ? border : fill;
+
+            tex.SetPixels(px);
+            tex.Apply(false, false);
+
+            var sprite = Sprite.Create(tex,
+                new Rect(0, 0, TexPx, TexPx),
+                new Vector2(0.5f, 0.5f), TexPx);
+
+            var tile   = ScriptableObject.CreateInstance<Tile>();
+            tile.sprite = sprite;
+            tile.color  = Color.white;
+            tiles[i]    = tile;
+        }
+
+        config.TileCache = tiles;
+        return tiles;
+    }
+
+    // ── Utility ────────────────────────────────────────────────────────────────────
+
+    private ChunkCoord GetCameraChunk()
+    {
+        var cam = Camera.main;
+        if (cam == null) return default;
+        return ChunkCoord.FromWorldPos(cam.transform.position, chunkSize);
+    }
+
+    private void ClearAllChunks()
+    {
+        foreach (var data in _activeChunks.Values)
+            data.Dispose();
+        _activeChunks.Clear();
+        tilemap.ClearAllTiles();
+    }
+
+    private void CancelAllPendingJobs()
+    {
+        foreach (var job in _pendingJobs.Values)
+        {
+            job.Handle.Complete();
+            DisposeJobArrays(job);
+        }
+        _pendingJobs.Clear();
+    }
+
+    private static void DisposeJobArrays(PendingJob job)
+    {
+        if (job.HeightOut.IsCreated)    job.HeightOut.Dispose();
+        if (job.MoistureOut.IsCreated)  job.MoistureOut.Dispose();
+        if (job.TempOut.IsCreated)      job.TempOut.Dispose();
+        if (job.ElevOffsets.IsCreated)  job.ElevOffsets.Dispose();
+        if (job.MoistOffsets.IsCreated) job.MoistOffsets.Dispose();
+        if (job.TempOffsets.IsCreated)  job.TempOffsets.Dispose();
+    }
+
+    // ── Public Accessors (for Editor Tools & Debug) ────────────────────────────────
+
+    public IReadOnlyDictionary<ChunkCoord, ChunkData> ActiveChunks => _activeChunks;
+    public int PendingJobCount => _pendingJobs.Count;
+    public int ActiveChunkCount => _activeChunks.Count;
+}
