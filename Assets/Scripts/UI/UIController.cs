@@ -178,11 +178,11 @@ public class UIController : MonoBehaviour
     private void HandleWorldGenerated(GenerationSettings s)
     {
         UpdateSeedField(s.seed);
-        SetStatus($"✓ World streaming — Seed: {s.seed}");
+        SetStatus($"World streaming — Seed: {s.seed}");
     }
 
     private void HandleWorldCleared()  => SetStatus("World cleared.");
-    private void HandleWorldLoaded(string name) => SetStatus($"✓ World '{name}' loaded.");
+    private void HandleWorldLoaded(string name) => SetStatus($"World '{name}' loaded.");
 
     // ── Settings Builder ──────────────────────────────────────────────────────────
 

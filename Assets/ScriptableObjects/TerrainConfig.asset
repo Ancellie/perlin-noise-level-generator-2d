@@ -9,19 +9,117 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 557a98cebc225024b8cd5f0fd467458f, type: 3}
+  m_Script: {fileID: 11500000, guid: 1415ad54ba5444d43961e7b49c5a85ec, type: 3}
   m_Name: TerrainConfig
   m_EditorClassIdentifier: Assembly-CSharp::TerrainConfigSO
-  layers:
-  - name: Water
-    heightThreshold: 0.35
-    color: {r: 0.12, g: 0.4, b: 0.8, a: 1}
-  - name: Sand
-    heightThreshold: 0.45
-    color: {r: 0.93, g: 0.86, b: 0.51, a: 1}
-  - name: Grass
-    heightThreshold: 0.72
-    color: {r: 0.22, g: 0.62, b: 0.16, a: 1}
+  biomes:
+  - name: Ocean
+    index: 0
+    primaryColor: {r: 0.08, g: 0.3, b: 0.72, a: 1}
+    secondaryColor: {r: 0.12, g: 0.4, b: 0.85, a: 1}
+    oceanMaxHeight: 0.35
+    mountainMinHeight: 1
+    idealTemperature: 0.5
+    idealMoisture: 0.9
+    influence: 0.8
+    spawnRules: []
   - name: Mountain
-    heightThreshold: 1
-    color: {r: 0.52, g: 0.47, b: 0.42, a: 1}
+    index: 1
+    primaryColor: {r: 0.5, g: 0.45, b: 0.4, a: 1}
+    secondaryColor: {r: 0.6, g: 0.55, b: 0.5, a: 1}
+    oceanMaxHeight: 0
+    mountainMinHeight: 0.72
+    idealTemperature: 0.2
+    idealMoisture: 0.3
+    influence: 0.8
+    spawnRules: []
+  - name: Snow
+    index: 2
+    primaryColor: {r: 0.92, g: 0.95, b: 1, a: 1}
+    secondaryColor: {r: 0.85, g: 0.9, b: 0.97, a: 1}
+    oceanMaxHeight: 0
+    mountainMinHeight: 0.88
+    idealTemperature: 0.05
+    idealMoisture: 0.5
+    influence: 0.4
+    spawnRules: []
+  - name: Beach
+    index: 3
+    primaryColor: {r: 0.93, g: 0.87, b: 0.55, a: 1}
+    secondaryColor: {r: 0.88, g: 0.8, b: 0.45, a: 1}
+    oceanMaxHeight: 0
+    mountainMinHeight: 1
+    idealTemperature: 0.6
+    idealMoisture: 0.3
+    influence: 0.25
+    spawnRules: []
+  - name: Desert
+    index: 4
+    primaryColor: {r: 0.9, g: 0.78, b: 0.4, a: 1}
+    secondaryColor: {r: 0.82, g: 0.68, b: 0.3, a: 1}
+    oceanMaxHeight: 0
+    mountainMinHeight: 1
+    idealTemperature: 0.9
+    idealMoisture: 0.1
+    influence: 0.35
+    spawnRules: []
+  - name: Savanna
+    index: 5
+    primaryColor: {r: 0.75, g: 0.72, b: 0.28, a: 1}
+    secondaryColor: {r: 0.65, g: 0.6, b: 0.22, a: 1}
+    oceanMaxHeight: 0
+    mountainMinHeight: 1
+    idealTemperature: 0.8
+    idealMoisture: 0.3
+    influence: 0.3
+    spawnRules: []
+  - name: Grassland
+    index: 6
+    primaryColor: {r: 0.45, g: 0.75, b: 0.25, a: 1}
+    secondaryColor: {r: 0.38, g: 0.65, b: 0.2, a: 1}
+    oceanMaxHeight: 0
+    mountainMinHeight: 1
+    idealTemperature: 0.5
+    idealMoisture: 0.4
+    influence: 0.35
+    spawnRules: []
+  - name: TropicalForest
+    index: 7
+    primaryColor: {r: 0.1, g: 0.55, b: 0.1, a: 1}
+    secondaryColor: {r: 0.08, g: 0.45, b: 0.08, a: 1}
+    oceanMaxHeight: 0
+    mountainMinHeight: 1
+    idealTemperature: 0.9
+    idealMoisture: 0.85
+    influence: 0.35
+    spawnRules: []
+  - name: TemperateForest
+    index: 8
+    primaryColor: {r: 0.18, g: 0.55, b: 0.18, a: 1}
+    secondaryColor: {r: 0.22, g: 0.48, b: 0.15, a: 1}
+    oceanMaxHeight: 0
+    mountainMinHeight: 1
+    idealTemperature: 0.5
+    idealMoisture: 0.7
+    influence: 0.35
+    spawnRules: []
+  - name: BorealForest
+    index: 9
+    primaryColor: {r: 0.15, g: 0.42, b: 0.22, a: 1}
+    secondaryColor: {r: 0.1, g: 0.35, b: 0.17, a: 1}
+    oceanMaxHeight: 0
+    mountainMinHeight: 1
+    idealTemperature: 0.25
+    idealMoisture: 0.6
+    influence: 0.3
+    spawnRules: []
+  - name: Tundra
+    index: 10
+    primaryColor: {r: 0.65, g: 0.72, b: 0.6, a: 1}
+    secondaryColor: {r: 0.55, g: 0.62, b: 0.5, a: 1}
+    oceanMaxHeight: 0
+    mountainMinHeight: 1
+    idealTemperature: 0.1
+    idealMoisture: 0.4
+    influence: 0.3
+    spawnRules: []

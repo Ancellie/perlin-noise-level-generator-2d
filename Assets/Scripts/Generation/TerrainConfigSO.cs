@@ -1,18 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>
-/// MODIFIED from v1 — now stores BiomeDefinitions instead of simple TerrainLayers.
-///
-/// MIGRATION NOTE:
-///   If upgrading an existing project, delete the old TerrainConfig.asset and
-///   recreate it via Right-click → Create → ProceduralWorld → Terrain Config V2.
-///   The old TerrainLayer[] API is replaced by BiomeDefinition[].
-///
-/// DEFAULT BIOMES pre-populated in the constructor cover a Whittaker-style biome grid:
-///   Ocean, Beach, Desert, Savanna, Grassland, Shrubland,
-///   TropicalForest, TemperateForest, BorealForest, Tundra, Mountain, Snow
-/// </summary>
 [CreateAssetMenu(
     fileName = "TerrainConfig",
     menuName  = "ProceduralWorld/Terrain Config V2",

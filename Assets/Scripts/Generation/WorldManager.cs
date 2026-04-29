@@ -1,24 +1,5 @@
 using UnityEngine;
 
-/// <summary>
-/// MODIFIED from v1 — now orchestrates the full advanced pipeline:
-///   ChunkStreamer   (chunk loading/unloading)
-///   ObjectSpawner   (prop placement)
-///   WorldSaveSystem (delta persistence)
-///   BiomeResolver   (via TerrainConfigSO)
-///
-/// WHAT CHANGED from v1:
-///   • GenerateWorld() no longer calls a monolithic LevelGenerator.GenerateLevel().
-///     Instead it initializes ChunkStreamer, which streams chunks continuously.
-///   • WorldManager still owns GenerationSettings and the singleton contract.
-///   • Events (OnWorldGenerated, OnWorldCleared) preserved for UIController compat.
-///   • Save/Load surface exposed for UI buttons.
-///
-/// WHAT IS UNCHANGED from v1:
-///   • Singleton pattern.
-///   • GenerationSettings, RandomizeSeedAndGenerate, ClearWorld public API.
-///   • Camera centring logic.
-/// </summary>
 public class WorldManager : MonoBehaviour
 {
     // ── Singleton ─────────────────────────────────────────────────────────────────
@@ -77,11 +58,6 @@ public class WorldManager : MonoBehaviour
     }
 
     // ── Generation ────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Initializes (or re-initializes) the ChunkStreamer with current settings.
-    /// The streamer then takes over — it streams chunks every frame autonomously.
-    /// </summary>
     public void GenerateWorld()
     {
         if (IsGenerating) return;
