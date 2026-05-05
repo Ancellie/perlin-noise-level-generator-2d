@@ -64,6 +64,11 @@ public class ChunkStreamer : MonoBehaviour
     private GenerationSettings _settings;
     private BiomeResolver      _resolver;
     private Tile[]             _tileCache;
+    
+    // World bounds in chunk-space, computed from settings.width / settings.height
+    private int _maxChunkX;
+    private int _maxChunkY;
+    private bool _infiniteWorld;
 
     // Scratch list for unload pass (avoids alloc each frame)
     private readonly List<ChunkCoord> _toUnload = new(32);
@@ -93,8 +98,15 @@ public class ChunkStreamer : MonoBehaviour
         terrainConfig = config;
         _resolver    = config.GetResolver();
         _tileCache   = BuildTileCache(config);
+        _infiniteWorld = settings.infiniteWorld;
 
+        // Compute world bounds in chunk-space from tile dimensions
+        // Chunks whose origin falls within [0, width) x [0, height) are in-bounds.
+        _maxChunkX = Mathf.CeilToInt((float)settings.width  / chunkSize) - 1;
+        _maxChunkY = Mathf.CeilToInt((float)settings.height / chunkSize) - 1;
         Debug.Log($"[ChunkStreamer] Initialized — chunkSize={chunkSize}, " +
+                  $"infinite={_infiniteWorld}, worldBounds={settings.width}x{settings.height} tiles " +
+                  $"({_maxChunkX + 1}x{_maxChunkY + 1} chunks), " +
                   $"loadRadius={loadRadius}, unloadRadius={unloadRadius}");
     }
 
@@ -125,6 +137,12 @@ public class ChunkStreamer : MonoBehaviour
             for (int dx = -loadRadius; dx <= loadRadius; dx++)
             {
                 var coord = new ChunkCoord(centre.X + dx, centre.Y + dy);
+                
+                // Skip chunks outside the world bounds defined by settings.width / height
+                // (only enforced in finite mode)
+                if (!_infiniteWorld &&
+                    (coord.X < 0 || coord.X > _maxChunkX || coord.Y < 0 || coord.Y > _maxChunkY))
+                    continue;
 
                 // Skip if already loaded or already being computed
                 if (_activeChunks.ContainsKey(coord) || _pendingJobs.ContainsKey(coord))

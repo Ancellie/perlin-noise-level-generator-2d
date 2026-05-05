@@ -1,9 +1,12 @@
 using UnityEngine;
 
+/// <summary>UNCHANGED from v1 — data class passed between UI → WorldManager → jobs.</summary>
 [System.Serializable]
 public class GenerationSettings
 {
     [Header("Map Dimensions")]
+    [Tooltip("When true, the world has no bounds — chunks are generated in all directions indefinitely.")]
+    public bool infiniteWorld = false;
     [Range(10, 500)] public int width  = 120;
     [Range(10, 500)] public int height = 80;
 
@@ -29,7 +32,7 @@ public class GenerationSettings
         $"[Seed:{seed} | Scale:{scale:F1} | Oct:{octaves} | Persist:{persistence:F2} | Lac:{lacunarity:F2}]";
 }
 
-// DEPRECATED — залишено для сумісності
+
 [System.Serializable]
 public class TerrainLayer
 {

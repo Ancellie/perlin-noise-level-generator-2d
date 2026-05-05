@@ -10,6 +10,7 @@ using TMPro;
 ///   • Save / Load / Delete buttons wired to WorldManager
 ///   • Streaming stats label (active chunks, pending jobs) updated each frame
 ///   • OnWorldLoaded callback subscribed from WorldManager
+///   • Infinite World toggle — disables width/height sliders when active
 ///
 /// The streaming stats update happens in Update() rather than via event to give
 /// a smooth real-time readout as chunks stream in.
@@ -40,6 +41,13 @@ public class UIController : MonoBehaviour
     [SerializeField] private Slider octavesSlider;
     [SerializeField] private Slider persistenceSlider;
     [SerializeField] private Slider lacunaritySlider;
+    [SerializeField] private Slider widthSlider;
+    [SerializeField] private Slider heightSlider;
+    
+    // ── Inspector: Infinite World Toggle ─────────────────────────────────────────
+    [Header("Infinite World")]
+    [Tooltip("When on, the world generates chunks in all directions without bounds.")]
+    [SerializeField] private Toggle infiniteToggle;
 
     // ── Inspector: Labels ─────────────────────────────────────────────────────────
 
@@ -48,6 +56,8 @@ public class UIController : MonoBehaviour
     [SerializeField] private TMP_Text octavesValueLabel;
     [SerializeField] private TMP_Text persistenceValueLabel;
     [SerializeField] private TMP_Text lacunarityValueLabel;
+    [SerializeField] private TMP_Text widthValueLabel;
+    [SerializeField] private TMP_Text heightValueLabel;
 
     [Header("Status / Stats")]
     [SerializeField] private TMP_Text statusLabel;
@@ -56,6 +66,8 @@ public class UIController : MonoBehaviour
     // ── Private ───────────────────────────────────────────────────────────────────
 
     private ChunkStreamer _streamer;
+    private Coroutine     _regenerateCoroutine;
+    private const float   RegenerateDelay = 0.4f;
 
     // ── Unity Lifecycle ───────────────────────────────────────────────────────────
 
@@ -69,6 +81,7 @@ public class UIController : MonoBehaviour
         RegisterSliderListeners();
         SubscribeToEvents();
         RefreshAllLabels();
+        InitInfiniteToggle();
 
         SetStatus("Ready. Press Generate or scroll to explore.");
     }
@@ -100,6 +113,8 @@ public class UIController : MonoBehaviour
         ConfigureSlider(octavesSlider,     1f,   8f,   true,  s.octaves);
         ConfigureSlider(persistenceSlider, 0.1f, 1f,   false, s.persistence);
         ConfigureSlider(lacunaritySlider,  1f,   4f,   false, s.lacunarity);
+        ConfigureSlider(widthSlider,       10f,  500f, true,  s.width);
+        ConfigureSlider(heightSlider,      10f,  500f, true,  s.height);
     }
 
     private void InitSeedField()
@@ -107,6 +122,14 @@ public class UIController : MonoBehaviour
         if (seedInputField == null) return;
         seedInputField.contentType = TMP_InputField.ContentType.IntegerNumber;
         seedInputField.text        = WorldManager.Instance.CurrentSettings.seed.ToString();
+    }
+    
+    private void InitInfiniteToggle()
+    {
+        if (infiniteToggle == null) return;
+        infiniteToggle.isOn = WorldManager.Instance.CurrentSettings.infiniteWorld;
+        ApplyInfiniteToggleState(infiniteToggle.isOn);
+        infiniteToggle.onValueChanged.AddListener(OnInfiniteToggleChanged);
     }
 
     private void RegisterButtonListeners()
@@ -121,10 +144,44 @@ public class UIController : MonoBehaviour
 
     private void RegisterSliderListeners()
     {
-        if (scaleSlider       != null) scaleSlider.onValueChanged.AddListener(_       => RefreshAllLabels());
-        if (octavesSlider     != null) octavesSlider.onValueChanged.AddListener(_     => RefreshAllLabels());
-        if (persistenceSlider != null) persistenceSlider.onValueChanged.AddListener(_ => RefreshAllLabels());
-        if (lacunaritySlider  != null) lacunaritySlider.onValueChanged.AddListener(_  => RefreshAllLabels());
+        if (scaleSlider       != null) scaleSlider.onValueChanged.AddListener(_       => OnSliderChanged());
+        if (octavesSlider     != null) octavesSlider.onValueChanged.AddListener(_     => OnSliderChanged());
+        if (persistenceSlider != null) persistenceSlider.onValueChanged.AddListener(_ => OnSliderChanged());
+        if (lacunaritySlider  != null) lacunaritySlider.onValueChanged.AddListener(_  => OnSliderChanged());
+        if (widthSlider       != null) widthSlider.onValueChanged.AddListener(_       => OnSliderChanged());
+        if (heightSlider      != null) heightSlider.onValueChanged.AddListener(_      => OnSliderChanged());
+    }
+
+    private void OnSliderChanged()
+    {
+        RefreshAllLabels();
+        if (_regenerateCoroutine != null) StopCoroutine(_regenerateCoroutine);
+        _regenerateCoroutine = StartCoroutine(RegenerateAfterDelay());
+    }
+
+    private void OnInfiniteToggleChanged(bool isInfinite)
+    {
+        ApplyInfiniteToggleState(isInfinite);
+        RefreshAllLabels();
+        if (_regenerateCoroutine != null) StopCoroutine(_regenerateCoroutine);
+        _regenerateCoroutine = StartCoroutine(RegenerateAfterDelay());
+        RefreshAllLabels();
+        if (_regenerateCoroutine != null) StopCoroutine(_regenerateCoroutine);
+        _regenerateCoroutine = StartCoroutine(RegenerateAfterDelay());
+    }
+    
+    /// <summary>Enables or disables the width/height sliders based on the infinite toggle.</summary>
+    private void ApplyInfiniteToggleState(bool isInfinite)
+    {
+        if (widthSlider  != null) widthSlider.interactable  = !isInfinite;
+        if (heightSlider != null) heightSlider.interactable = !isInfinite;
+    }
+    private System.Collections.IEnumerator RegenerateAfterDelay()
+    {
+        yield return new WaitForSeconds(RegenerateDelay);
+        SetStatus("Generating…");
+        WorldManager.Instance.ApplySettingsAndGenerate(BuildSettingsFromUI());
+        _regenerateCoroutine = null;
     }
 
     private void SubscribeToEvents()
@@ -178,7 +235,14 @@ public class UIController : MonoBehaviour
     private void HandleWorldGenerated(GenerationSettings s)
     {
         UpdateSeedField(s.seed);
-        SetStatus($"World streaming — Seed: {s.seed}");
+        // Sync the toggle state back in case the world was loaded from a save
+        if (infiniteToggle != null && infiniteToggle.isOn != s.infiniteWorld)
+        {
+            infiniteToggle.isOn = s.infiniteWorld;
+            ApplyInfiniteToggleState(s.infiniteWorld);
+        }
+        string modeLabel = s.infiniteWorld ? "Infinite" : $"{s.width}×{s.height}";
+        SetStatus($"World streaming — Seed: {s.seed} | Mode: {modeLabel}");
     }
 
     private void HandleWorldCleared()  => SetStatus("World cleared.");
@@ -191,13 +255,17 @@ public class UIController : MonoBehaviour
         if (!int.TryParse(seedInputField != null ? seedInputField.text : "0", out int seed))
             seed = 0;
 
+        bool infinite = infiniteToggle != null && infiniteToggle.isOn;
         return new GenerationSettings
         {
-            seed        = seed,
-            scale       = SliderFloatValue(scaleSlider,       40f),
-            octaves     = SliderIntValue(octavesSlider,       4),
-            persistence = SliderFloatValue(persistenceSlider, 0.5f),
-            lacunarity  = SliderFloatValue(lacunaritySlider,  2f),
+            seed          = seed,
+            scale         = SliderFloatValue(scaleSlider,       40f),
+            octaves       = SliderIntValue(octavesSlider,       4),
+            persistence   = SliderFloatValue(persistenceSlider, 0.5f),
+            lacunarity    = SliderFloatValue(lacunaritySlider,  2f),
+            width         = SliderIntValue(widthSlider,         120),
+            height        = SliderIntValue(heightSlider,        80),
+            infiniteWorld = infinite,
         };
     }
 
@@ -205,10 +273,14 @@ public class UIController : MonoBehaviour
 
     private void RefreshAllLabels()
     {
+        bool infinite = infiniteToggle != null && infiniteToggle.isOn;
+        
         SetLabel(scaleValueLabel,       $"Scale: {SliderFloatValue(scaleSlider, 40f):F1}");
         SetLabel(octavesValueLabel,     $"Octaves: {SliderIntValue(octavesSlider, 4)}");
         SetLabel(persistenceValueLabel, $"Persistence: {SliderFloatValue(persistenceSlider, 0.5f):F2}");
         SetLabel(lacunarityValueLabel,  $"Lacunarity: {SliderFloatValue(lacunaritySlider, 2f):F2}");
+        SetLabel(widthValueLabel,       infinite ? "Width: ∞" : $"Width: {SliderIntValue(widthSlider, 120)} tiles");
+        SetLabel(heightValueLabel,      infinite ? "Height: ∞" : $"Height: {SliderIntValue(heightSlider, 80)} tiles");
     }
 
     // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -217,6 +289,7 @@ public class UIController : MonoBehaviour
     {
         if (s == null) return;
         s.minValue = min; s.maxValue = max; s.wholeNumbers = whole; s.value = val;
+        s.interactable = true;
     }
 
     private static int   SliderIntValue(Slider s,   int   fb) => s != null ? Mathf.RoundToInt(s.value) : fb;

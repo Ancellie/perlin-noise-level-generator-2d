@@ -106,7 +106,7 @@ public class DebugOverlay : MonoBehaviour
         {
             var style = new GUIStyle(GUI.skin.box)
             {
-                fontSize  = 13,
+                fontSize  = 18,
                 alignment = TextAnchor.UpperLeft
             };
             style.normal.textColor = Color.white;
@@ -121,7 +121,7 @@ public class DebugOverlay : MonoBehaviour
                 $"[B] Biome labels  : {(_showBiomes ? "ON" : "OFF")}\n" +
                 $"[N] Noise heat    : {(_showNoise  ? "ON" : "OFF")}";
 
-            GUI.Box(new Rect(10, 10, 220, 160), hud, style);
+            GUI.Box(new Rect(10, 10, 440, 320), hud, style);
         }
 
         // ── Biome labels ──────────────────────────────────────────────────────────
@@ -129,7 +129,7 @@ public class DebugOverlay : MonoBehaviour
         {
             var labelStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize  = 10,
+                fontSize  = 18,
                 alignment = TextAnchor.MiddleCenter
             };
             labelStyle.normal.textColor = Color.yellow;
