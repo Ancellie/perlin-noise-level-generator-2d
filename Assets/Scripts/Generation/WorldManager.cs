@@ -72,7 +72,7 @@ public class WorldManager : MonoBehaviour
         }
 
         chunkStreamer.Initialize(_settings, terrainConfig);
-        CentreCamera();
+        //CentreCamera();
 
         IsGenerating = false;
         OnWorldGenerated?.Invoke(_settings);
@@ -146,6 +146,8 @@ public class WorldManager : MonoBehaviour
         octaves     = src.octaves,
         persistence = src.persistence,
         lacunarity  = src.lacunarity,
-        offset      = src.offset
+        offset      = src.offset,
+        infiniteWorld = src.infiniteWorld
     };
 }
+

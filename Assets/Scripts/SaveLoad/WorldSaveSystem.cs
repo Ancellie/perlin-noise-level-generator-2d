@@ -68,6 +68,9 @@ public class WorldSaveSystem : MonoBehaviour
             octaves     = settings.octaves,
             persistence = settings.persistence,
             lacunarity  = settings.lacunarity,
+            width         = settings.width,
+            height        = settings.height,
+            infiniteWorld = settings.infiniteWorld,
             savedChunks = new List<string>()
         };
 
@@ -171,6 +174,9 @@ public class WorldSaveSystem : MonoBehaviour
         octaves     = m.octaves,
         persistence = m.persistence,
         lacunarity  = m.lacunarity,
+        width         = m.width,
+        height        = m.height,
+        infiniteWorld = m.infiniteWorld
     };
 }
 
@@ -187,6 +193,10 @@ public class WorldManifest
     public int          octaves;
     public float        persistence;
     public float        lacunarity;
+    public int          width;
+    public int          height;
+    public bool         infiniteWorld;
+    
     public List<string> savedChunks;   // "x_y" strings for fast existence checks
 }
 
