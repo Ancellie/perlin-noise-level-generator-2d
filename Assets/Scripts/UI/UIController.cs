@@ -163,9 +163,7 @@ public class UIController : MonoBehaviour
     {
         ApplyInfiniteToggleState(isInfinite);
         RefreshAllLabels();
-        if (_regenerateCoroutine != null) StopCoroutine(_regenerateCoroutine);
-        _regenerateCoroutine = StartCoroutine(RegenerateAfterDelay());
-        RefreshAllLabels();
+        
         if (_regenerateCoroutine != null) StopCoroutine(_regenerateCoroutine);
         _regenerateCoroutine = StartCoroutine(RegenerateAfterDelay());
     }
@@ -235,12 +233,21 @@ public class UIController : MonoBehaviour
     private void HandleWorldGenerated(GenerationSettings s)
     {
         UpdateSeedField(s.seed);
-        // Sync the toggle state back in case the world was loaded from a save
         if (infiniteToggle != null && infiniteToggle.isOn != s.infiniteWorld)
         {
             infiniteToggle.isOn = s.infiniteWorld;
             ApplyInfiniteToggleState(s.infiniteWorld);
         }
+        
+        if (scaleSlider != null) scaleSlider.SetValueWithoutNotify(s.scale);
+        if (octavesSlider != null) octavesSlider.SetValueWithoutNotify(s.octaves);
+        if (persistenceSlider != null) persistenceSlider.SetValueWithoutNotify(s.persistence);
+        if (lacunaritySlider != null) lacunaritySlider.SetValueWithoutNotify(s.lacunarity);
+        if (widthSlider != null) widthSlider.SetValueWithoutNotify(s.width);
+        if (heightSlider != null) heightSlider.SetValueWithoutNotify(s.height);
+
+        RefreshAllLabels();
+        
         string modeLabel = s.infiniteWorld ? "Infinite" : $"{s.width}×{s.height}";
         SetStatus($"World streaming — Seed: {s.seed} | Mode: {modeLabel}");
     }
@@ -297,5 +304,5 @@ public class UIController : MonoBehaviour
     private static void  SetLabel(TMP_Text t,  string msg)    { if (t != null) t.text = msg; }
 
     private void SetStatus(string msg)     { if (statusLabel    != null) statusLabel.text = msg; }
-    private void UpdateSeedField(int seed) { if (seedInputField != null) seedInputField.text = seed.ToString(); }
+    private void UpdateSeedField(int seed) { if (seedInputField != null) seedInputField.SetTextWithoutNotify(seed.ToString()); }
 }
