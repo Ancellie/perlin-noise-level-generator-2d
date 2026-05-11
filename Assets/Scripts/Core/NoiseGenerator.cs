@@ -1,4 +1,4 @@
-using UnityEngine;
+/*using UnityEngine;
 
 public static class NoiseGenerator
 {
@@ -68,3 +68,5 @@ public static class NoiseGenerator
         return heightMap;
     }
 }
+
+*/

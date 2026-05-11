@@ -2,19 +2,6 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
-/// <summary>
-/// MODIFIED from v1 — adds Save, Load, and Delete Save buttons.
-/// All v1 slider + seed controls are preserved and unchanged.
-///
-/// New additions:
-///   • Save / Load / Delete buttons wired to WorldManager
-///   • Streaming stats label (active chunks, pending jobs) updated each frame
-///   • OnWorldLoaded callback subscribed from WorldManager
-///   • Infinite World toggle — disables width/height sliders when active
-///
-/// The streaming stats update happens in Update() rather than via event to give
-/// a smooth real-time readout as chunks stream in.
-/// </summary>
 public class UIController : MonoBehaviour
 {
     // ── Inspector: Buttons ────────────────────────────────────────────────────────
@@ -61,7 +48,7 @@ public class UIController : MonoBehaviour
 
     [Header("Status / Stats")]
     [SerializeField] private TMP_Text statusLabel;
-    [SerializeField] private TMP_Text streamingStatsLabel;    // NEW: live chunk counter
+    [SerializeField] private TMP_Text streamingStatsLabel;    
 
     // ── Private ───────────────────────────────────────────────────────────────────
 
@@ -88,7 +75,6 @@ public class UIController : MonoBehaviour
 
     private void Update()
     {
-        // Update streaming stats every frame (cheap text update)
         if (_streamer != null && streamingStatsLabel != null)
         {
             streamingStatsLabel.text =
@@ -168,7 +154,6 @@ public class UIController : MonoBehaviour
         _regenerateCoroutine = StartCoroutine(RegenerateAfterDelay());
     }
     
-    /// <summary>Enables or disables the width/height sliders based on the infinite toggle.</summary>
     private void ApplyInfiniteToggleState(bool isInfinite)
     {
         if (widthSlider  != null) widthSlider.interactable  = !isInfinite;
