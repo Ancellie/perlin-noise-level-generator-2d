@@ -67,10 +67,17 @@ public class ChunkData
 
     public ChunkData(ChunkCoord coord, int chunkSize)
     {
-        Coord         = coord;
-        ChunkSize     = chunkSize;
+        Coord          = coord;
+        ChunkSize      = chunkSize;
         SpawnedObjects = new List<GameObject>();
         TileOverrides  = new Dictionary<Vector2Int, int>();
+
+        int n = chunkSize * chunkSize;
+        HeightMap       = new float[n];
+        MoistureMap     = new float[n];
+        TemperatureMap  = new float[n];
+        BiomeIndices    = new int[n];
+
         Touch();
     }
 
@@ -86,19 +93,19 @@ public class ChunkData
 
     /// <summary>Read height at tile-local coordinates (0…ChunkSize-1).</summary>
     public float GetHeight(int lx, int ly) =>
-        HeightMap != null ? HeightMap[lx + ly * ChunkSize] : 0f;
+        HeightMapReady ? HeightMap[lx + ly * ChunkSize] : 0f;
 
     public float GetMoisture(int lx, int ly) =>
-        MoistureMap != null ? MoistureMap[lx + ly * ChunkSize] : 0f;
+        HeightMapReady ? MoistureMap[lx + ly * ChunkSize] : 0f;
 
     public float GetTemperature(int lx, int ly) =>
-        TemperatureMap != null ? TemperatureMap[lx + ly * ChunkSize] : 0f;
+        HeightMapReady ? TemperatureMap[lx + ly * ChunkSize] : 0f;
 
     /// <summary>World-tile origin of this chunk.</summary>
     public Vector2Int WorldOrigin => Coord.WorldOrigin(ChunkSize);
 
-    /// <summary>True only when all three noise maps have been filled by the job.</summary>
-    public bool IsDataReady => HeightMap != null && MoistureMap != null && TemperatureMap != null;
+    /// <summary>True when the noise job has copied results into the pre-allocated maps.</summary>
+    public bool IsDataReady => HeightMapReady;
 
     /// <summary>Has any player modification been applied since last save?</summary>
     public bool IsDirty => State == ChunkState.Modified && TileOverrides.Count > 0;

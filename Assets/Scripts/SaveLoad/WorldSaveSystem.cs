@@ -61,16 +61,17 @@ public class WorldSaveSystem : MonoBehaviour
         // Build manifest
         var manifest = new WorldManifest
         {
-            worldName   = worldName,
-            seed        = settings.seed,
-            savedAt     = DateTime.UtcNow.ToString("o"),
-            scale       = settings.scale,
-            octaves     = settings.octaves,
-            persistence = settings.persistence,
-            lacunarity  = settings.lacunarity,
-            width         = settings.width,
-            height        = settings.height,
-            infiniteWorld = settings.infiniteWorld,
+            worldName    = worldName,
+            seed         = settings.seed,
+            savedAt      = DateTime.UtcNow.ToString("o"),
+            noiseBackend = (int)settings.noiseBackend,
+            scale        = settings.scale,
+            octaves      = settings.octaves,
+            persistence  = settings.persistence,
+            lacunarity   = settings.lacunarity,
+            width          = settings.width,
+            height         = settings.height,
+            infiniteWorld  = settings.infiniteWorld,
             savedChunks = new List<string>()
         };
 
@@ -169,11 +170,12 @@ public class WorldSaveSystem : MonoBehaviour
     /// <summary>Converts a saved manifest back into GenerationSettings.</summary>
     public static GenerationSettings ManifestToSettings(WorldManifest m) => new GenerationSettings
     {
-        seed        = m.seed,
-        scale       = m.scale,
-        octaves     = m.octaves,
-        persistence = m.persistence,
-        lacunarity  = m.lacunarity,
+        noiseBackend  = m.NoiseBackendEnum,
+        seed          = m.seed,
+        scale         = m.scale,
+        octaves       = m.octaves,
+        persistence   = m.persistence,
+        lacunarity    = m.lacunarity,
         width         = m.width,
         height        = m.height,
         infiniteWorld = m.infiniteWorld
@@ -189,6 +191,10 @@ public class WorldManifest
     public string       worldName;
     public int          seed;
     public string       savedAt;
+
+    /// <summary>Serialized as int for JsonUtility (<see cref="NoiseBackend"/>).</summary>
+    public int          noiseBackend;
+
     public float        scale;
     public int          octaves;
     public float        persistence;
@@ -198,6 +204,12 @@ public class WorldManifest
     public bool         infiniteWorld;
     
     public List<string> savedChunks;   // "x_y" strings for fast existence checks
+
+    /// <summary>Older saves omit <see cref="noiseBackend"/> (default 0 = Simplex).</summary>
+    public NoiseBackend NoiseBackendEnum =>
+        System.Enum.IsDefined(typeof(NoiseBackend), noiseBackend)
+            ? (NoiseBackend)noiseBackend
+            : NoiseBackend.SimplexFbm;
 }
 
 /// <summary>Per-chunk file — sparse list of tile overrides.</summary>

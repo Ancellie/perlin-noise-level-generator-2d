@@ -75,6 +75,12 @@ public class ChunkStreamer : MonoBehaviour
     // Scratch list for unload pass (avoids alloc each frame)
     private readonly List<ChunkCoord> _toUnload = new(32);
 
+    /// <summary>Reused <see cref="Tilemap.SetTilesBlock"/> buffer — one chunk worth, no per-flush alloc.</summary>
+    private TileBase[] _scratchTilesBlock;
+
+    /// <summary>Reused weight vector for <see cref="BiomeResolver.ResolveDominantIndex"/> — no per-tile alloc.</summary>
+    private float[] _scratchBiomeWeights;
+
     // ── Pending Job Bookkeeping ────────────────────────────────────────────────────
 
     private struct PendingJob
@@ -115,6 +121,8 @@ public class ChunkStreamer : MonoBehaviour
         // Chunks whose origin falls within [0, width) x [0, height) are in-bounds.
         _maxChunkX = Mathf.CeilToInt((float)settings.width  / chunkSize) - 1;
         _maxChunkY = Mathf.CeilToInt((float)settings.height / chunkSize) - 1;
+        EnsureFlushScratchBuffers();
+
         Debug.Log($"[ChunkStreamer] Initialized — chunkSize={chunkSize}, " +
                   $"infinite={_infiniteWorld}, worldBounds={settings.width}x{settings.height} tiles " +
                   $"({_maxChunkX + 1}x{_maxChunkY + 1} chunks), " +
@@ -194,12 +202,20 @@ public class ChunkStreamer : MonoBehaviour
         
         _activeChunks[coord] = data;
 
-        var handle = NoiseJobScheduler.Schedule(
-            coord, chunkSize,
-            _settings.seed, _settings.scale,
-            _settings.octaves, _settings.persistence, _settings.lacunarity,
-            out var heightOut, out var moistureOut, out var tempOut,
-            out var elevOff, out var moistOff, out var tmpOff);
+        JobHandle handle;
+        NativeArray<float> heightOut, moistureOut, tempOut;
+        NativeArray<float2> elevOff, moistOff, tmpOff;
+
+        using (GenerationProfilerMarkers.NoiseJobSchedule.Auto())
+        {
+            handle = NoiseJobScheduler.Schedule(
+                coord, chunkSize,
+                _settings.seed, _settings.scale,
+                _settings.octaves, _settings.persistence, _settings.lacunarity,
+                _settings.noiseBackend,
+                out heightOut, out moistureOut, out tempOut,
+                out elevOff, out moistOff, out tmpOff);
+        }
 
         _pendingJobs[coord] = new PendingJob
         {
@@ -228,24 +244,24 @@ public class ChunkStreamer : MonoBehaviour
         foreach (var coord in completed)
         {
             var job = _pendingJobs[coord];
-            job.Handle.Complete(); // must call Complete even on finished jobs
+
+            using (GenerationProfilerMarkers.NoiseJobWaitComplete.Auto())
+                job.Handle.Complete(); // must call Complete even on finished jobs
 
             // Copy from NativeArrays → managed arrays in ChunkData
             if (_activeChunks.TryGetValue(coord, out ChunkData data))
             {
-                data.HeightMap = job.HeightOut.ToArray();
-                data.MoistureMap = job.MoistureOut.ToArray();
-                data.TemperatureMap = job.TempOut.ToArray();
+                using (GenerationProfilerMarkers.NoiseJobCopyNativeToManaged.Auto())
+                {
+                    job.HeightOut.CopyTo(data.HeightMap);
+                    job.MoistureOut.CopyTo(data.MoistureMap);
+                    job.TempOut.CopyTo(data.TemperatureMap);
+                }
+
                 data.HeightMapReady = true;
             }
 
-            // Dispose all NativeArrays — they were Allocator.TempJob
-            job.HeightOut.Dispose();
-            job.MoistureOut.Dispose();
-            job.TempOut.Dispose();
-            job.ElevOffsets.Dispose();
-            job.MoistOffsets.Dispose();
-            job.TempOffsets.Dispose();
+            DisposeJobArrays(job);
 
             _pendingJobs.Remove(coord);
         }
@@ -267,65 +283,82 @@ public class ChunkStreamer : MonoBehaviour
         }
     }
 
+    private void EnsureFlushScratchBuffers()
+    {
+        if (_resolver == null) return;
+
+        int n = chunkSize * chunkSize;
+        if (_scratchTilesBlock == null || _scratchTilesBlock.Length != n)
+            _scratchTilesBlock = new TileBase[n];
+
+        int bc = _resolver.BiomeCount;
+        if (_scratchBiomeWeights == null || _scratchBiomeWeights.Length < bc)
+            _scratchBiomeWeights = new float[bc];
+    }
+
     // ── Step 3: Place tiles on the shared Tilemap ────────────────────────────────
 
     private void FlushChunkToTilemap(ChunkData data)
     {
         if (!data.IsDataReady) return;
 
-        int    cs      = chunkSize;
-        int    tileCount = cs * cs;
-        var    tiles   = new TileBase[tileCount];
-        var    origin  = data.WorldOrigin;
-        var    bounds  = new BoundsInt(origin.x, origin.y, 0, cs, cs, 1);
-
-        data.BiomeIndices = new int[tileCount];
-
-        for (int ly = 0; ly < cs; ly++)
+        using (GenerationProfilerMarkers.ChunkFlushTilemap.Auto())
         {
-            for (int lx = 0; lx < cs; lx++)
+            EnsureFlushScratchBuffers();
+
+            int    cs         = data.ChunkSize;
+            int    tileCount  = cs * cs;
+            var    tiles      = _scratchTilesBlock;
+            var    origin     = data.WorldOrigin;
+            var    bounds     = new BoundsInt(origin.x, origin.y, 0, cs, cs, 1);
+            var    biomeScratch = _scratchBiomeWeights;
+
+            for (int ly = 0; ly < cs; ly++)
             {
-                int idx = lx + ly * cs;
-
-                float h = data.HeightMap[idx];
-                
-                if (_isHeatmapMode)
+                for (int lx = 0; lx < cs; lx++)
                 {
-                    // Map height [0, 1] to a grayscale tile index (0 to 255)
-                    int heatIndex = Mathf.Clamp(Mathf.FloorToInt(h * 255f), 0, 255);
-                    tiles[idx] = _heatmapCache[heatIndex];
+                    int idx = lx + ly * cs;
+
+                    float h = data.HeightMap[idx];
                     
-                    // Still resolve biome index under the hood in case it's needed
-                    float m = data.MoistureMap[idx];
-                    float t = data.TemperatureMap[idx];
-                    data.BiomeIndices[idx] = _resolver.Resolve(h, m, t).DominantIndex;
-                }
-                else
-                {
-                    // Apply override if this tile was modified by the player
-                    if (data.TileOverrides.TryGetValue(new Vector2Int(lx, ly), out int overrideIdx))
+                    if (_isHeatmapMode)
                     {
-                        tiles[idx]  = _tileCache[overrideIdx];
-                        data.BiomeIndices[idx] = overrideIdx;
-                        continue;
+                        // Map height [0, 1] to a grayscale tile index (0 to 255)
+                        int heatIndex = Mathf.Clamp(Mathf.FloorToInt(h * 255f), 0, 255);
+                        tiles[idx] = _heatmapCache[heatIndex];
+                        
+                        // Still resolve biome index under the hood in case it's needed
+                        float m = data.MoistureMap[idx];
+                        float t = data.TemperatureMap[idx];
+                        data.BiomeIndices[idx] = _resolver.ResolveDominantIndex(h, m, t, biomeScratch);
                     }
+                    else
+                    {
+                        // Apply override if this tile was modified by the player
+                        if (data.TileOverrides.TryGetValue(new Vector2Int(lx, ly), out int overrideIdx))
+                        {
+                            tiles[idx]  = _tileCache[overrideIdx];
+                            data.BiomeIndices[idx] = overrideIdx;
+                            continue;
+                        }
 
-                    float m = data.MoistureMap[idx];
-                    float t = data.TemperatureMap[idx];
+                        float m = data.MoistureMap[idx];
+                        float t = data.TemperatureMap[idx];
 
-                    var sample = _resolver.Resolve(h, m, t);
-
-                    data.BiomeIndices[idx] = sample.DominantIndex;
-                    tiles[idx]   = _tileCache[sample.DominantIndex];
+                        int dom = _resolver.ResolveDominantIndex(h, m, t, biomeScratch);
+                        data.BiomeIndices[idx] = dom;
+                        tiles[idx]   = _tileCache[dom];
+                    }
                 }
             }
-        }
 
-        tilemap.SetTilesBlock(bounds, tiles);
-        
-        if (data.State == ChunkData.ChunkState.Pending)
-        {
-            data.MarkReady();
+            using (GenerationProfilerMarkers.ChunkFlushSetTilesBlock.Auto())
+                tilemap.SetTilesBlock(bounds, tiles);
+            
+            if (data.State == ChunkData.ChunkState.Pending)
+            {
+                data.MarkReady();
+            }
         }
     }
     
@@ -352,7 +385,8 @@ public class ChunkStreamer : MonoBehaviour
             // If job is still running, complete it first (avoid NativeArray leak)
             if (_pendingJobs.TryGetValue(coord, out PendingJob job))
             {
-                job.Handle.Complete();
+                using (GenerationProfilerMarkers.NoiseJobWaitComplete.Auto())
+                    job.Handle.Complete();
                 DisposeJobArrays(job);
                 _pendingJobs.Remove(coord);
             }
@@ -456,7 +490,8 @@ public class ChunkStreamer : MonoBehaviour
     {
         foreach (var job in _pendingJobs.Values)
         {
-            job.Handle.Complete();
+            using (GenerationProfilerMarkers.NoiseJobWaitComplete.Auto())
+                job.Handle.Complete();
             DisposeJobArrays(job);
         }
         _pendingJobs.Clear();
@@ -464,12 +499,15 @@ public class ChunkStreamer : MonoBehaviour
 
     private static void DisposeJobArrays(PendingJob job)
     {
-        if (job.HeightOut.IsCreated)    job.HeightOut.Dispose();
-        if (job.MoistureOut.IsCreated)  job.MoistureOut.Dispose();
-        if (job.TempOut.IsCreated)      job.TempOut.Dispose();
-        if (job.ElevOffsets.IsCreated)  job.ElevOffsets.Dispose();
-        if (job.MoistOffsets.IsCreated) job.MoistOffsets.Dispose();
-        if (job.TempOffsets.IsCreated)  job.TempOffsets.Dispose();
+        using (GenerationProfilerMarkers.NoiseJobNativeDispose.Auto())
+        {
+            if (job.HeightOut.IsCreated)    job.HeightOut.Dispose();
+            if (job.MoistureOut.IsCreated)  job.MoistureOut.Dispose();
+            if (job.TempOut.IsCreated)      job.TempOut.Dispose();
+            if (job.ElevOffsets.IsCreated)  job.ElevOffsets.Dispose();
+            if (job.MoistOffsets.IsCreated) job.MoistOffsets.Dispose();
+            if (job.TempOffsets.IsCreated)  job.TempOffsets.Dispose();
+        }
     }
 
     // ── Public Accessors (for Editor Tools & Debug) ────────────────────────────────

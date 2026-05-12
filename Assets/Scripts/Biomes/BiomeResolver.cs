@@ -77,10 +77,54 @@ public class BiomeResolver
         if (_mountainIndex < 0) Debug.LogWarning("[BiomeResolver] No 'Mountain' biome found.");
     }
 
+    /// <summary>Allocates weights; use for editor/preview. Hot path should call <see cref="ResolveDominantIndex"/>.</summary>
     public BiomeBlendSample Resolve(float height, float moisture, float temperature)
     {
-        float[] weights = new float[_biomes.Length];
+        using (GenerationProfilerMarkers.BiomeResolve.Auto())
+        {
+            float[] weights = new float[_biomes.Length];
+            FillWeights(height, moisture, temperature, weights);
 
+            int   dominant = 0;
+            float maxW     = -1f;
+            Color blended  = Color.black;
+
+            for (int i = 0; i < _biomes.Length; i++)
+            {
+                blended += _biomes[i].primaryColor * weights[i];
+                if (weights[i] > maxW) { maxW = weights[i]; dominant = i; }
+            }
+
+            return new BiomeBlendSample(dominant, weights, blended);
+        }
+    }
+
+    /// <summary>
+    /// Dominant biome only — reuses <paramref name="weightsScratch"/> (length ≥ biome count). No allocations.
+    /// </summary>
+    public int ResolveDominantIndex(float height, float moisture, float temperature, float[] weightsScratch)
+    {
+        if (weightsScratch == null || weightsScratch.Length < _biomes.Length)
+            throw new ArgumentException("weightsScratch must be at least BiomeCount long.", nameof(weightsScratch));
+
+        using (GenerationProfilerMarkers.BiomeResolve.Auto())
+        {
+            FillWeights(height, moisture, temperature, weightsScratch);
+
+            int   dominant = 0;
+            float maxW     = -1f;
+            for (int i = 0; i < _biomes.Length; i++)
+            {
+                if (weightsScratch[i] > maxW) { maxW = weightsScratch[i]; dominant = i; }
+            }
+
+            return dominant;
+        }
+    }
+
+    /// <summary>Writes full biome weight vector; buffer must have length ≥ <see cref="BiomeCount"/>.</summary>
+    private void FillWeights(float height, float moisture, float temperature, float[] weights)
+    {
         float oceanWeight    = 0f;
         float mountainWeight = 0f;
 
@@ -116,18 +160,6 @@ public class BiomeResolver
 
         if (_oceanIndex    >= 0) weights[_oceanIndex]    = oceanWeight;
         if (_mountainIndex >= 0) weights[_mountainIndex] = mountainWeight;
-
-        int   dominant = 0;
-        float maxW     = -1f;
-        Color blended  = Color.black;
-
-        for (int i = 0; i < _biomes.Length; i++)
-        {
-            blended += _biomes[i].primaryColor * weights[i];
-            if (weights[i] > maxW) { maxW = weights[i]; dominant = i; }
-        }
-
-        return new BiomeBlendSample(dominant, weights, blended);
     }
 
     public BiomeDefinition GetBiome(int index) => _biomes[index];
