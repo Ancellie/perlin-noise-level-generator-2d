@@ -64,6 +64,8 @@ public class ChunkStreamer : MonoBehaviour
     private GenerationSettings _settings;
     private BiomeResolver      _resolver;
     private Tile[]             _tileCache;
+    private Tile[]             _heatmapCache;
+    private bool               _isHeatmapMode = false;
     
     // World bounds in chunk-space, computed from settings.width / settings.height
     private int _maxChunkX;
@@ -98,7 +100,16 @@ public class ChunkStreamer : MonoBehaviour
         terrainConfig = config;
         _resolver    = config.GetResolver();
         _tileCache   = BuildTileCache(config);
+        _heatmapCache = BuildHeatmapCache(); 
         _infiniteWorld = settings.infiniteWorld;
+        
+        var overlay = FindAnyObjectByType<DebugOverlay>();
+        if (overlay != null)
+        {
+            overlay.OnShowNoiseChanged -= OnHeatmapToggled;
+            overlay.OnShowNoiseChanged += OnHeatmapToggled;
+            _isHeatmapMode = overlay.ShowNoise;
+        }
 
         // Compute world bounds in chunk-space from tile dimensions
         // Chunks whose origin falls within [0, width) x [0, height) are in-bounds.
@@ -124,7 +135,29 @@ public class ChunkStreamer : MonoBehaviour
         UnloadDistantChunks(cameraChunk);
     }
 
-    private void OnDestroy() => CancelAllPendingJobs();
+    private void OnDestroy() 
+    {
+        CancelAllPendingJobs();
+        var overlay = FindAnyObjectByType<DebugOverlay>();
+        if (overlay != null)
+        {
+            overlay.OnShowNoiseChanged -= OnHeatmapToggled;
+        }
+    }
+    
+    private void OnHeatmapToggled(bool isHeatmap)
+    {
+        if (_isHeatmapMode == isHeatmap) return;
+        _isHeatmapMode = isHeatmap;
+        
+        foreach (var data in _activeChunks.Values)
+        {
+            if (data.State == ChunkData.ChunkState.Ready || data.State == ChunkData.ChunkState.Modified)
+            {
+                ForceRefreshChunkVisuals(data);
+            }
+        }
+    }
 
     // ── Step 1: Determine and schedule new chunks ─────────────────────────────────
 
@@ -155,10 +188,10 @@ public class ChunkStreamer : MonoBehaviour
         }
     }
 
-    private void ScheduleJob(ChunkCoord coord)
+        private void ScheduleJob(ChunkCoord coord)
     {
-        // Register the ChunkData immediately so duplicate requests are blocked
         var data = new ChunkData(coord, chunkSize);
+        
         _activeChunks[coord] = data;
 
         var handle = NoiseJobScheduler.Schedule(
@@ -254,28 +287,53 @@ public class ChunkStreamer : MonoBehaviour
             {
                 int idx = lx + ly * cs;
 
-                // Apply override if this tile was modified by the player
-                if (data.TileOverrides.TryGetValue(new Vector2Int(lx, ly), out int overrideIdx))
-                {
-                    tiles[lx + ly * cs]  = _tileCache[overrideIdx];
-                    data.BiomeIndices[idx] = overrideIdx;
-                    continue;
-                }
-
                 float h = data.HeightMap[idx];
-                float m = data.MoistureMap[idx];
-                float t = data.TemperatureMap[idx];
+                
+                if (_isHeatmapMode)
+                {
+                    // Map height [0, 1] to a grayscale tile index (0 to 255)
+                    int heatIndex = Mathf.Clamp(Mathf.FloorToInt(h * 255f), 0, 255);
+                    tiles[idx] = _heatmapCache[heatIndex];
+                    
+                    // Still resolve biome index under the hood in case it's needed
+                    float m = data.MoistureMap[idx];
+                    float t = data.TemperatureMap[idx];
+                    data.BiomeIndices[idx] = _resolver.Resolve(h, m, t).DominantIndex;
+                }
+                else
+                {
+                    // Apply override if this tile was modified by the player
+                    if (data.TileOverrides.TryGetValue(new Vector2Int(lx, ly), out int overrideIdx))
+                    {
+                        tiles[idx]  = _tileCache[overrideIdx];
+                        data.BiomeIndices[idx] = overrideIdx;
+                        continue;
+                    }
 
-                var sample = _resolver.Resolve(h, m, t);
+                    float m = data.MoistureMap[idx];
+                    float t = data.TemperatureMap[idx];
 
-                data.BiomeIndices[idx] = sample.DominantIndex;
-                tiles[lx + ly * cs]   = _tileCache[sample.DominantIndex];
+                    var sample = _resolver.Resolve(h, m, t);
+
+                    data.BiomeIndices[idx] = sample.DominantIndex;
+                    tiles[idx]   = _tileCache[sample.DominantIndex];
+                }
             }
         }
 
         tilemap.SetTilesBlock(bounds, tiles);
-        data.MarkReady();
+        
+        if (data.State == ChunkData.ChunkState.Pending)
+        {
+            data.MarkReady();
+        }
     }
+    
+    private void ForceRefreshChunkVisuals(ChunkData data)
+    {
+        FlushChunkToTilemap(data);
+    }
+
 
     // ── Step 4: Unload distant chunks ─────────────────────────────────────────────
 
@@ -327,34 +385,54 @@ public class ChunkStreamer : MonoBehaviour
             Color fill   = config.biomes[i].primaryColor;
             Color border = new Color(fill.r * 0.72f, fill.g * 0.72f, fill.b * 0.72f, 1f);
 
-            var tex = new Texture2D(TexPx, TexPx, TextureFormat.RGBA32, false)
-            {
-                filterMode = FilterMode.Point,
-                wrapMode   = TextureWrapMode.Clamp
-            };
-
-            Color[] px = new Color[TexPx * TexPx];
-            for (int py = 0; py < TexPx; py++)
-                for (int px2 = 0; px2 < TexPx; px2++)
-                    px[px2 + py * TexPx] =
-                        (px2 == 0 || py == 0 || px2 == TexPx - 1 || py == TexPx - 1)
-                            ? border : fill;
-
-            tex.SetPixels(px);
-            tex.Apply(false, false);
-
-            var sprite = Sprite.Create(tex,
-                new Rect(0, 0, TexPx, TexPx),
-                new Vector2(0.5f, 0.5f), TexPx);
-
-            var tile   = ScriptableObject.CreateInstance<Tile>();
-            tile.sprite = sprite;
-            tile.color  = Color.white;
-            tiles[i]    = tile;
+            tiles[i] = CreateSolidTile(fill, border, TexPx);
         }
 
         config.TileCache = tiles;
         return tiles;
+    }
+    
+    private static Tile[] BuildHeatmapCache()
+    {
+        const int TexPx = 16;
+        var tiles = new Tile[256];
+
+        for (int i = 0; i < 256; i++)
+        {
+            float v = i / 255f;
+            Color color = new Color(v, v, v, 1f); // Grayscale based on height
+            tiles[i] = CreateSolidTile(color, color, TexPx);
+        }
+
+        return tiles;
+    }
+
+    private static Tile CreateSolidTile(Color fill, Color border, int size)
+    {
+        var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+        {
+            filterMode = FilterMode.Point,
+            wrapMode   = TextureWrapMode.Clamp
+        };
+
+        Color[] px = new Color[size * size];
+        for (int py = 0; py < size; py++)
+            for (int px2 = 0; px2 < size; px2++)
+                px[px2 + py * size] =
+                    (px2 == 0 || py == 0 || px2 == size - 1 || py == size - 1)
+                        ? border : fill;
+
+        tex.SetPixels(px);
+        tex.Apply(false, false);
+
+        var sprite = Sprite.Create(tex,
+            new Rect(0, 0, size, size),
+            new Vector2(0.5f, 0.5f), size);
+
+        var tile   = ScriptableObject.CreateInstance<Tile>();
+        tile.sprite = sprite;
+        tile.color  = Color.white;
+        return tile;
     }
 
     // ── Utility ────────────────────────────────────────────────────────────────────

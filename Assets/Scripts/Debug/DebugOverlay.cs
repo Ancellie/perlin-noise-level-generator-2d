@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -41,6 +42,10 @@ public class DebugOverlay : MonoBehaviour
 
     private Material _lineMat;
     private Camera   _cam;
+    
+    // -- Public API --
+    public event Action<bool> OnShowNoiseChanged;
+    public bool ShowNoise => _showNoise;
 
     // ── Unity Lifecycle ───────────────────────────────────────────────────────────
 
@@ -54,7 +59,11 @@ public class DebugOverlay : MonoBehaviour
     {
         if (Input.GetKeyDown(toggleChunkKey)) _showChunks = !_showChunks;
         if (Input.GetKeyDown(toggleBiomeKey)) _showBiomes = !_showBiomes;
-        if (Input.GetKeyDown(toggleNoiseKey)) _showNoise  = !_showNoise;
+        if (Input.GetKeyDown(toggleNoiseKey))
+        {
+            _showNoise = !_showNoise;
+            OnShowNoiseChanged?.Invoke(_showNoise);
+        }
         if (Input.GetKeyDown(toggleHudKey))   _showHud    = !_showHud;
     }
 
