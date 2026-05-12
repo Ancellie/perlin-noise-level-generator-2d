@@ -11,6 +11,8 @@ public class GenerationSettings
     [Range(10, 500)] public int height = 80;
 
     [Header("Noise Parameters")]
+    [Tooltip("Simplex (snoise) vs classic Perlin (cnoise) — same fBM, Burst-compiled.")]
+    public NoiseBackend noiseBackend = NoiseBackend.SimplexFbm;
     public int     seed        = 42;
     [Range(1f, 200f)]  public float scale       = 40f;
     [Range(1, 8)]      public int   octaves     = 4;
@@ -29,7 +31,7 @@ public class GenerationSettings
     }
 
     public override string ToString() =>
-        $"[Seed:{seed} | Scale:{scale:F1} | Oct:{octaves} | Persist:{persistence:F2} | Lac:{lacunarity:F2}]";
+        $"[{noiseBackend} | Seed:{seed} | Scale:{scale:F1} | Oct:{octaves} | Persist:{persistence:F2} | Lac:{lacunarity:F2}]";
 }
 
 

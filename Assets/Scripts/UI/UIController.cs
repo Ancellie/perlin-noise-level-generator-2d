@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -36,6 +37,10 @@ public class UIController : MonoBehaviour
     [Tooltip("When on, the world generates chunks in all directions without bounds.")]
     [SerializeField] private Toggle infiniteToggle;
 
+    [Header("Noise")]
+    [Tooltip("Optional. If unset, WorldManager keeps its current noise backend when applying UI settings.")]
+    [SerializeField] private TMP_Dropdown noiseBackendDropdown;
+
     // ── Inspector: Labels ─────────────────────────────────────────────────────────
 
     [Header("Value Labels")]
@@ -64,6 +69,7 @@ public class UIController : MonoBehaviour
 
         InitSliders();
         InitSeedField();
+        InitNoiseBackendDropdown();
         RegisterButtonListeners();
         RegisterSliderListeners();
         SubscribeToEvents();
@@ -109,6 +115,18 @@ public class UIController : MonoBehaviour
         seedInputField.contentType = TMP_InputField.ContentType.IntegerNumber;
         seedInputField.text        = WorldManager.Instance.CurrentSettings.seed.ToString();
     }
+
+    private void InitNoiseBackendDropdown()
+    {
+        if (noiseBackendDropdown == null || WorldManager.Instance == null) return;
+        noiseBackendDropdown.ClearOptions();
+        noiseBackendDropdown.AddOptions(new List<string>
+        {
+            "Simplex fBM",
+            "Classic Perlin fBM"
+        });
+        noiseBackendDropdown.SetValueWithoutNotify((int)WorldManager.Instance.CurrentSettings.noiseBackend);
+    }
     
     private void InitInfiniteToggle()
     {
@@ -136,6 +154,8 @@ public class UIController : MonoBehaviour
         if (lacunaritySlider  != null) lacunaritySlider.onValueChanged.AddListener(_  => OnSliderChanged());
         if (widthSlider       != null) widthSlider.onValueChanged.AddListener(_       => OnSliderChanged());
         if (heightSlider      != null) heightSlider.onValueChanged.AddListener(_      => OnSliderChanged());
+        if (noiseBackendDropdown != null)
+            noiseBackendDropdown.onValueChanged.AddListener(_ => OnSliderChanged());
     }
 
     private void OnSliderChanged()
@@ -230,6 +250,8 @@ public class UIController : MonoBehaviour
         if (lacunaritySlider != null) lacunaritySlider.SetValueWithoutNotify(s.lacunarity);
         if (widthSlider != null) widthSlider.SetValueWithoutNotify(s.width);
         if (heightSlider != null) heightSlider.SetValueWithoutNotify(s.height);
+        if (noiseBackendDropdown != null)
+            noiseBackendDropdown.SetValueWithoutNotify((int)s.noiseBackend);
 
         RefreshAllLabels();
         
@@ -248,8 +270,14 @@ public class UIController : MonoBehaviour
             seed = 0;
 
         bool infinite = infiniteToggle != null && infiniteToggle.isOn;
+        var wm = WorldManager.Instance;
+        var backend = wm != null ? wm.CurrentSettings.noiseBackend : NoiseBackend.SimplexFbm;
+        if (noiseBackendDropdown != null)
+            backend = (NoiseBackend)noiseBackendDropdown.value;
+
         return new GenerationSettings
         {
+            noiseBackend  = backend,
             seed          = seed,
             scale         = SliderFloatValue(scaleSlider,       40f),
             octaves       = SliderIntValue(octavesSlider,       4),

@@ -1,9 +1,9 @@
 // This file must be in an Editor/ folder — it is stripped from runtime builds.
 #if UNITY_EDITOR
-using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Mathematics;
 using UnityEditor;
 using UnityEngine;
-using Unity.Mathematics;
 
 /// <summary>
 /// Custom Inspector for TerrainConfigSO.
@@ -38,6 +38,7 @@ public class TerrainConfigEditor : Editor
     private int   _previewOctaves     = 4;
     private float _previewPersistence = 0.5f;
     private float _previewLacunarity  = 2f;
+    private NoiseBackend _previewNoiseBackend = NoiseBackend.SimplexFbm;
 
     // Noise map selector
     private enum PreviewMap { Elevation, Moisture, Temperature, Biome }
@@ -136,6 +137,7 @@ public class TerrainConfigEditor : Editor
             _previewOctaves    = EditorGUILayout.IntSlider("Octaves", _previewOctaves, 1, 8);
             _previewPersistence = EditorGUILayout.Slider("Persistence", _previewPersistence, 0.1f, 1f);
             _previewLacunarity  = EditorGUILayout.Slider("Lacunarity", _previewLacunarity, 1f, 4f);
+            _previewNoiseBackend = (NoiseBackend)EditorGUILayout.EnumPopup("Noise backend", _previewNoiseBackend);
 
             EditorGUI.indentLevel--;
 
@@ -227,13 +229,10 @@ public class TerrainConfigEditor : Editor
             };
         }
 
-        // Build three noise maps using local Simplex noise generator
-        var elev = GeneratePreviewNoise(sz, sz, _previewSeed,
-            _previewScale, _previewOctaves, _previewPersistence, _previewLacunarity);
-        var moist = GeneratePreviewNoise(sz, sz, _previewSeed + 31337,
-            _previewScale, _previewOctaves, _previewPersistence, _previewLacunarity);
-        var temp  = GeneratePreviewNoise(sz, sz, _previewSeed + 99991,
-            _previewScale, _previewOctaves, _previewPersistence, _previewLacunarity);
+        // Same math as NoiseJob (TerrainFbm + CreateOctaveOffsets); coords match chunk (0,0) world tiles.
+        var elev  = GeneratePreviewNoise(sz, sz);
+        var moist = GeneratePreviewNoise(sz, sz, channelSeedOffset: 31337);
+        var temp  = GeneratePreviewNoise(sz, sz, channelSeedOffset: 99991);
 
         var resolver = _target.GetResolver();
         var pixels   = new Color[sz * sz];
@@ -268,45 +267,36 @@ public class TerrainConfigEditor : Editor
 
     // ── Local Noise Generation for Preview ────────────────────────────────────────
 
-    private float[,] GeneratePreviewNoise(int width, int height, int seed, float scale, int octaves, float persistence, float lacunarity)
+    private float[,] GeneratePreviewNoise(int width, int height, int channelSeedOffset = 0)
     {
         float[,] map = new float[width, height];
-        
-        float maxPossibleHeight = 0f;
-        float ampForMax = 1f;
-        for (int i = 0; i < octaves; i++)
-        {
-            maxPossibleHeight += ampForMax;
-            ampForMax *= persistence;
-        }
-        
-        uint validSeed = (uint)(seed == 0 ? 1 : Mathf.Abs(seed));
-        var prng = new Unity.Mathematics.Random(validSeed);
-        float2[] offsets = new float2[octaves];
-        for (int i = 0; i < octaves; i++)
-        {
-            offsets[i] = new float2(prng.NextFloat(-100000f, 100000f), prng.NextFloat(-100000f, 100000f));
-        }
+        int channelSeed = _previewSeed + channelSeedOffset;
 
-        for (int y = 0; y < height; y++)
+        NativeArray<float2> offsets = NoiseJobScheduler.CreateOctaveOffsets(
+            channelSeed, _previewOctaves, Allocator.Temp);
+
+        try
         {
-            for (int x = 0; x < width; x++)
+            for (int y = 0; y < height; y++)
             {
-                float amplitude = 1f;
-                float frequency = 1f;
-                float noiseValue = 0f;
-
-                for (int o = 0; o < octaves; o++)
+                for (int x = 0; x < width; x++)
                 {
-                    float sampleX = (x + offsets[o].x) / scale * frequency;
-                    float sampleY = (y + offsets[o].y) / scale * frequency;
-                    noiseValue += noise.snoise(new float2(sampleX, sampleY)) * amplitude;
-                    amplitude *= persistence;
-                    frequency *= lacunarity;
+                    map[x, y] = TerrainFbm.SampleNormalized(
+                        x, y,
+                        _previewScale,
+                        _previewOctaves,
+                        _previewPersistence,
+                        _previewLacunarity,
+                        _previewNoiseBackend,
+                        offsets);
                 }
-                map[x, y] = Mathf.Clamp01((noiseValue / maxPossibleHeight + 1f) * 0.5f);
             }
         }
+        finally
+        {
+            if (offsets.IsCreated) offsets.Dispose();
+        }
+
         return map;
     }
 

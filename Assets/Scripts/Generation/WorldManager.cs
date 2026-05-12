@@ -139,14 +139,15 @@ public class WorldManager : MonoBehaviour
 
     private static GenerationSettings CloneSettings(GenerationSettings src) => new GenerationSettings
     {
-        width       = src.width,
-        height      = src.height,
-        seed        = src.seed,
-        scale       = src.scale,
-        octaves     = src.octaves,
-        persistence = src.persistence,
-        lacunarity  = src.lacunarity,
-        offset      = src.offset,
+        width         = src.width,
+        height        = src.height,
+        noiseBackend  = src.noiseBackend,
+        seed          = src.seed,
+        scale         = src.scale,
+        octaves       = src.octaves,
+        persistence   = src.persistence,
+        lacunarity    = src.lacunarity,
+        offset        = src.offset,
         infiniteWorld = src.infiniteWorld
     };
 }
