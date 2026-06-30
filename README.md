@@ -408,56 +408,39 @@ Pan speed scales with current zoom level (`panSpeed × orthographicSize / 10`).
 
 ## Gameplay
 
-> 📷 INSERT SCREENSHOT HERE
-
----
-
-## World Exploration
-
-
+> <img width="1531" height="858" alt="image" src="https://github.com/user-attachments/assets/b54631d5-d5cd-467d-9e35-38a03aa65dbc" />
 
 ---
 
 ## Biome Overview
-
-
+> <img width="665" height="490" alt="image" src="https://github.com/user-attachments/assets/10b18d41-3e60-4453-97fd-e045ea5af270" />
 
 ---
 
 ## Noise Heatmap Debug View
-
-
+> <img width="1541" height="863" alt="image" src="https://github.com/user-attachments/assets/ae80d396-3a74-49fa-9eea-6e4e5253fdc3" />
 
 ---
 
 ## Generation UI Panel
 
-
-
----
-
-## Chunk Streaming Debug Overlay
-
-
+> <img width="347" height="834" alt="image" src="https://github.com/user-attachments/assets/6095fba1-495e-4760-b862-d017f9249ebd" />
 
 ---
+
 
 ## Terrain Config Editor Preview
 
+> <img width="681" height="798" alt="image" src="https://github.com/user-attachments/assets/8903db27-83b4-4eb8-8f58-466cd350d7a4" />
 
 
 ---
 
 ## Noise Benchmark 
-
-
----
-
-# 🎥 GIF Demonstration
-
-
+> <img width="478" height="704" alt="image" src="https://github.com/user-attachments/assets/7f2e19c2-a947-41f6-80eb-c4d8e3d15b66" />
 
 ---
+
 
 # ⚡ Performance
 
